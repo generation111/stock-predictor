@@ -23,18 +23,23 @@ st.set_page_config(page_title="美股 24H 實時走勢預測工具", layout="wid
 # 2. 側邊欄：股票代號動態記憶與系統參數設定
 st.sidebar.header("🔍 美股代號與參數設定")
 
-# 初始化 Session State 清單 (包含預設熱門股)
+# 初始化 Session State 清單 (容量提升至最多 50 項)
 if 'quick_tickers' not in st.session_state:
     st.session_state.quick_tickers = ["ABVC", "TSLA", "NVDA", "AAPL", "AMD", "AMZN", "MSFT", "GOOGL", "META"]
 
-selected_quick = st.sidebar.selectbox("🔥 熱門與歷史搜尋個股", options=["自訂輸入"] + st.session_state.quick_tickers, index=1)
+# 功能選項：是否允許自動追加歷史查詢個股
+auto_add_history = st.sidebar.checkbox("自動追加查詢個股至選單", value=True)
+
+selected_quick = st.sidebar.selectbox("🔥 熱門與歷史搜尋個股 (上限50項)", options=["自訂輸入"] + st.session_state.quick_tickers, index=1)
 
 default_ticker = "ABVC" if selected_quick == "自訂輸入" else selected_quick
 ticker_input = st.sidebar.text_input("輸入美股股票代號 (例如: ABVC, TSLA)", value=default_ticker).upper().strip()
 
-# 若輸入了不在清單中的新代號，自動追加至歷史搜尋清單中
-if ticker_input and ticker_input not in st.session_state.quick_tickers:
+# 判斷是否追加至歷史搜尋清單 (需勾選功能且不重複，最多保留前 50 個)
+if auto_add_history and ticker_input and ticker_input not in st.session_state.quick_tickers:
     st.session_state.quick_tickers.append(ticker_input)
+    if len(st.session_state.quick_tickers) > 50:
+        st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
 
 st.sidebar.markdown("---")
 include_extended = st.sidebar.checkbox("開啟夜盤與延長交易時段 (24H Extended)", value=True)
