@@ -16,7 +16,7 @@ try:
 except LookupError:
     nltk.download('vader_lexicon', quiet=True)
 
-st.set_page_config(page_title="華人跨國市場 24H 實時走勢預測工具", layout="wide")
+st.set_page_config(page_title="華人跨國市場 24H 實時走勢預測與回測系統", layout="wide")
 
 # 初始化 Session State
 if 'quick_tickers' not in st.session_state:
@@ -24,7 +24,6 @@ if 'quick_tickers' not in st.session_state:
         "2330.TW",   # 台積電
         "2454.TW",   # 聯發科
         "0700.HK",   # 騰訊控股
-        "9988.HK",   # 阿里巴巴
         "600519.SS", # 貴州茅台
         "ABVC",      # 美股 ABVC
         "NVDA",      # 美股 輝達
@@ -42,24 +41,19 @@ def normalize_ticker(symbol):
     symbol = symbol.upper().strip()
     if not symbol:
         return ""
-    # 若為純數字，依長度預設自動補上台股或港股字尾
     if symbol.isdigit():
         if len(symbol) == 4:
-            return f"{symbol}.TW"  # 預設台股上市
+            return f"{symbol}.TW"
         elif len(symbol) == 5:
-            return f"{symbol}.HK"  # 預設港股
+            return f"{symbol}.HK"
         elif len(symbol) == 6:
-            if symbol.startswith('6'):
-                return f"{symbol}.SS" # 滬股
-            else:
-                return f"{symbol}.SZ" # 深股
+            return f"{symbol}.SS" if symbol.startswith('6') else f"{symbol}.SZ"
     return symbol
 
-# Callback: 當文字輸入框改變時，立即更新 Session State 及歷史清單
+# Callbacks
 def on_ticker_input_change():
     raw_ticker = st.session_state.ticker_input_key
     new_ticker = normalize_ticker(raw_ticker)
-    
     if new_ticker:
         st.session_state.ticker_input = new_ticker
         if new_ticker not in st.session_state.quick_tickers:
@@ -68,31 +62,29 @@ def on_ticker_input_change():
                 st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
         st.session_state.selected_quick = new_ticker
 
-# Callback: 當下拉選單選擇改變時
 def on_selectbox_change():
     sel = st.session_state.selectbox_key
     if sel != "自訂輸入":
         st.session_state.ticker_input = sel
 
-# 2. 翻譯輔助函式
+# 翻譯輔助函式
 @st.cache_data(ttl=3600, show_spinner=False)
 def translate_text(text, target_lang='zh-TW'):
     if not text:
         return ""
     try:
-        translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
-        return translated
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except Exception:
         return text
 
-# 3. 側邊欄：華人熱門市場與參數設定
-st.sidebar.header("🔍 全球華人市場標的設定")
+# 側邊欄：市場與策略回測設定
+st.sidebar.header("🔍 全球標的與回測條件設定")
 
 options = ["自訂輸入"] + st.session_state.quick_tickers
 default_idx = options.index(st.session_state.selected_quick) if st.session_state.selected_quick in options else 0
 
 st.sidebar.selectbox(
-    "🔥 熱門與歷史搜尋 (含台/港/A股/美股/加密貨幣)", 
+    "🔥 熱門與歷史搜尋", 
     options=options, 
     index=default_idx,
     key="selectbox_key",
@@ -100,92 +92,27 @@ st.sidebar.selectbox(
 )
 
 st.sidebar.text_input(
-    "輸入代號 (台股如 2330, 港股如 0700, 美股如 NVDA)", 
+    "輸入代號 (台/港/A股/美股/加密貨幣)", 
     value=st.session_state.ticker_input,
     key="ticker_input_key",
     on_change=on_ticker_input_change
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("💡 **代號輸入指南**：")
-st.sidebar.caption("• 台股：`2330` 或 `2330.TW` (上櫃 `8069.TWO`) \n• 港股：`0700.HK` \n• A股：`600519.SS` (滬) / `000001.SZ` (深)\n• 加密貨幣：`BTC-USD`")
+st.sidebar.subheader("⚙️ 策略與風控參數設定")
+hold_periods = st.sidebar.slider("最長持倉 K 棒數 (Periods)", min_value=1, max_value=10, value=3)
+stop_loss_pct = st.sidebar.slider("停損百分比 (%)", min_value=0.5, max_value=5.0, value=1.0, step=0.1) / 100.0
+take_profit_pct = st.sidebar.slider("停利百分比 (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.1) / 100.0
+tx_fee = st.sidebar.number_input("預估交易摩擦成本/單邊 (%)", value=0.05, step=0.01) / 100.0
 
+st.sidebar.markdown("---")
 include_extended = st.sidebar.checkbox("開啟延長交易/夜盤 (限美股與加密貨幣)", value=True)
 interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], index=1)
 period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
 refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
 
-# 4. 新聞情緒分析模組
-def get_news_sentiment(ticker_symbol):
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        news_list = ticker.news
-        
-        if not news_list:
-            return 0.0, []
-        
-        sia = SentimentIntensityAnalyzer()
-        compound_scores = []
-        processed_news = []
-        
-        for item in news_list[:8]:
-            title = ""
-            publisher = "Unknown"
-            link = "#"
-            pub_time_str = "未知時間"
-
-            if isinstance(item, dict) and 'content' in item:
-                content = item.get('content', {})
-                title = content.get('title', '')
-                publisher = content.get('provider', {}).get('displayName', 'Unknown')
-                click_through_url = content.get('clickThroughUrl', {})
-                canonical_url = content.get('canonicalUrl', {})
-                link = click_through_url.get('url') or canonical_url.get('url') or '#'
-                
-                pub_date = content.get('pubDate')
-                if pub_date:
-                    try:
-                        dt = datetime.datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
-                        pub_time_str = dt.strftime('%Y-%m-%d %H:%M')
-                    except Exception:
-                        pub_time_str = str(pub_date)[:16]
-            else:
-                title = item.get('title', '')
-                publisher = item.get('publisher', 'Unknown')
-                link = item.get('link', '#')
-                
-                pub_ts = item.get('providerPublishTime')
-                if pub_ts:
-                    try:
-                        pub_time_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d %H:%M')
-                    except Exception:
-                        pass
-
-            if not title:
-                continue
-            
-            # 若標題為英文，翻譯成繁體中文呈現；若原本為中文，則計算前轉英發送給 Vader
-            title_zh = translate_text(title, target_lang='zh-TW')
-            title_en_for_vader = translate_text(title, target_lang='en')
-            
-            score = sia.polarity_scores(title_en_for_vader)['compound']
-            compound_scores.append(score)
-            processed_news.append({
-                'title': title,
-                'title_zh': title_zh,
-                'publisher': publisher,
-                'link': link,
-                'score': score,
-                'pub_time': pub_time_str
-            })
-        
-        avg_score = float(np.mean(compound_scores)) if compound_scores else 0.0
-        return avg_score, processed_news
-    except Exception:
-        return 0.0, []
-
-# 5. 技術指標計算模組
-def compute_indicators(df, sentiment_score):
+# 技術指標計算
+def compute_indicators(df, sentiment_score=0.0):
     data = df.copy()
     data['Returns'] = data['Close'].pct_change()
     data['SMA_5'] = data['Close'].rolling(window=5).mean()
@@ -209,71 +136,175 @@ def compute_indicators(df, sentiment_score):
     
     data['Volatility'] = data['Returns'].rolling(window=10).std()
     data['Sentiment'] = sentiment_score
-    data['Target'] = (data['Close'].shift(-1) > data['Close']).astype(int)
+    data['Target'] = (data['Close'].shift(-hold_periods) > data['Close']).astype(int)
     
     return data.dropna()
 
-# 6. 數據擷取與預測建模
+# 回測核心引擎 (Backtest Engine)
+def run_backtest(df, model, feature_cols, hold_p, sl, tp, fee):
+    df_bt = df.copy()
+    X = df_bt[feature_cols]
+    
+    # 取得模型的看漲機率
+    probs = model.predict_proba(X)[:, 1]
+    df_bt['Prob_Up'] = probs
+    
+    # 策略進場訊號 (1: 做多, -1: 做空, 0: 觀望)
+    signals = []
+    for idx in range(len(df_bt)):
+        prob = df_bt['Prob_Up'].iloc[idx]
+        close = df_bt['Close'].iloc[idx]
+        sma5 = df_bt['SMA_5'].iloc[idx]
+        
+        # 濾波條件：機率高於 55% 且價格站在短均線上才做多
+        if prob > 0.55 and close > sma5:
+            signals.append(1)
+        elif prob < 0.45 and close < sma5:
+            signals.append(-1)
+        else:
+            signals.append(0)
+            
+    df_bt['Signal'] = signals
+    
+    # 模擬交易執行
+    trades = []
+    equity_curve = [1.0] # 初始資金標準化為 1.0
+    
+    i = 0
+    while i < len(df_bt) - hold_p:
+        sig = df_bt['Signal'].iloc[i]
+        if sig != 0:
+            entry_price = df_bt['Close'].iloc[i]
+            entry_time = df_bt.index[i]
+            
+            trade_ret = 0.0
+            exit_reason = "Time Exit"
+            
+            # 檢查未來 hold_p 個週期內的動態停損停利
+            for step in range(1, hold_p + 1):
+                curr_price = df_bt['Close'].iloc[i + step]
+                price_ret = (curr_price - entry_price) / entry_price if sig == 1 else (entry_price - curr_price) / entry_price
+                
+                if price_ret <= -sl:
+                    trade_ret = -sl
+                    exit_reason = "Stop Loss"
+                    break
+                elif price_ret >= tp:
+                    trade_ret = tp
+                    exit_reason = "Take Profit"
+                    break
+                else:
+                    trade_ret = price_ret
+            
+            # 扣除雙邊交易摩擦成本
+            net_ret = trade_ret - (fee * 2)
+            trades.append({
+                'entry_time': entry_time,
+                'type': 'LONG' if sig == 1 else 'SHORT',
+                'entry_price': entry_price,
+                'ret': net_ret,
+                'exit_reason': exit_reason
+            })
+            equity_curve.append(equity_curve[-1] * (1 + net_ret))
+            i += hold_p # 避免重疊進場
+        else:
+            i += 1
+            
+    # 計算績效指標
+    if trades:
+        trade_df = pd.DataFrame(trades)
+        win_rate = (trade_df['ret'] > 0).mean() * 100.0
+        total_ret = (equity_curve[-1] - 1.0) * 100.0
+        
+        # 買入持有報酬率 (Buy & Hold)
+        bh_ret = ((df_bt['Close'].iloc[-1] - df_bt['Close'].iloc[0]) / df_bt['Close'].iloc[0]) * 100.0
+        
+        # 最大回撤 (MDD)
+        eq_arr = np.array(equity_curve)
+        peak = np.maximum.accumulate(eq_arr)
+        drawdown = (eq_arr - peak) / peak
+        max_dd = np.min(drawdown) * 100.0
+        
+        # 夏普比率 (Sharpe Ratio)
+        returns_arr = trade_df['ret'].values
+        sharpe = (np.mean(returns_arr) / (np.std(returns_arr) + 1e-9)) * np.sqrt(252) if len(returns_arr) > 1 else 0.0
+    else:
+        trade_df = pd.DataFrame()
+        win_rate, total_ret, bh_ret, max_dd, sharpe = 0.0, 0.0, 0.0, 0.0, 0.0
+
+    metrics = {
+        'total_trades': len(trades),
+        'win_rate': win_rate,
+        'total_ret': total_ret,
+        'bh_ret': bh_ret,
+        'max_dd': max_dd,
+        'sharpe': sharpe,
+        'equity_curve': equity_curve
+    }
+    return metrics, trade_df
+
+# 數據擷取與預測建模
 @st.cache_data(ttl=15, show_spinner=False)
 def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True):
     try:
         stock = yf.Ticker(ticker)
-        
-        # 僅美股與加密貨幣開啟 prepost，避免台/港/A股報錯
         use_prepost = extended if ("." not in ticker or ticker.endswith("-USD")) else False
         df = stock.history(period=period, interval=interval, prepost=use_prepost)
         
-        if df.empty or len(df) < 20:
-            return None, None, None, None, 0.0, [], None
+        if df.empty or len(df) < 30:
+            return None, None, None, None, 0.0, company_name if 'company_name' in locals() else ticker
             
         try:
             company_name = stock.info.get('longName') or stock.info.get('shortName') or ticker
         except Exception:
             company_name = ticker
         
-        sentiment_score, news_data = get_news_sentiment(ticker)
-        df = compute_indicators(df, sentiment_score)
+        df = compute_indicators(df)
+        feature_cols = ['Returns', 'SMA_5', 'SMA_20', 'RSI', 'MACD', 'MACD_Signal', 'BB_PctB', 'Volatility']
         
-        feature_cols = ['Returns', 'SMA_5', 'SMA_20', 'RSI', 'MACD', 'MACD_Signal', 'BB_PctB', 'Volatility', 'Sentiment']
+        X = df[feature_cols][:-hold_periods]
+        y = df['Target'][:-hold_periods]
         
-        X = df[feature_cols][:-1]
-        y = df['Target'][:-1]
-        
-        if len(X) < 15:
-            return None, None, None, None, 0.0, [], None
+        if len(X) < 20:
+            return None, None, None, None, 0.0, company_name
             
-        split_idx = int(len(X) * 0.8)
+        # 樣本拆分：前 70% 訓練，後 30% 進行 Walk-Forward 測試驗證
+        split_idx = int(len(X) * 0.7)
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
         
-        model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+        model = RandomForestClassifier(n_estimators=150, max_depth=4, min_samples_leaf=5, random_state=42)
         model.fit(X_train, y_train)
         
-        test_acc = accuracy_score(y_test, model.predict(X_test)) if len(y_test) > 0 else 0.5
+        # 執行樣本外 (Out-of-Sample) 策略回測
+        test_df = df.iloc[split_idx:]
+        bt_metrics, trade_history = run_backtest(
+            test_df, model, feature_cols, hold_periods, stop_loss_pct, take_profit_pct, tx_fee
+        )
         
+        # 當前最新週期預測
         latest_feature = df[feature_cols].iloc[[-1]]
         latest_pred = int(model.predict(latest_feature)[0])
         latest_probs = model.predict_proba(latest_feature)[0]
-        
         latest_prob = float(latest_probs[latest_pred])
         
-        return df, latest_pred, latest_prob, test_acc, sentiment_score, news_data, company_name
+        return df, latest_pred, latest_prob, bt_metrics, trade_history, company_name
     except Exception:
-        return None, None, None, None, 0.0, [], None
+        return None, None, None, None, None, ticker
 
-# 7. 主畫面局部刷新渲染模組
+# 主畫面局部刷新渲染模組
 @st.fragment(run_every=refresh_rate)
 def render_dashboard(symbol, p_period, p_interval, p_extended):
     if not symbol:
-        st.warning("請在左側輸入股票或加密貨幣代號。")
+        st.warning("請在左側輸入股票代號。")
         return
 
-    df, latest_pred, latest_prob, test_acc, sentiment_score, news_data, company_name = fetch_and_predict_dynamic(
+    df, latest_pred, latest_prob, bt_metrics, trade_history, company_name = fetch_and_predict_dynamic(
         symbol, p_period, p_interval, p_extended
     )
 
-    if df is not None:
-        st.title(f"⚡ {symbol} ({company_name}) 實時走勢與 AI 預測")
+    if df is not None and bt_metrics is not None:
+        st.title(f"⚡ {symbol} ({company_name}) 實時預測與策略回測驗證")
         
         latest_price = df['Close'].iloc[-1]
         prev_price = df['Close'].iloc[-2]
@@ -281,69 +312,66 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         pct_change = (price_change / prev_price) * 100
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric(f"{symbol} 最新報價", f"${latest_price:.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
+        col1.metric(f"{symbol} 當前最新報價", f"${latest_price:.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
         
         pred_text = "🟢 看漲 (UP)" if latest_pred == 1 else "🔴 看跌 (DOWN)"
-        col2.metric("下一週期預測方向", pred_text)
-        col3.metric("預測信心度", f"{latest_prob * 100:.1f}%")
-        
-        sentiment_label = "中性 🟡"
-        if sentiment_score > 0.05: sentiment_label = "偏多 🟢"
-        elif sentiment_score < -0.05: sentiment_label = "偏空 🔴"
-        col4.metric("即時新聞情緒指數", f"{sentiment_score:+.3f}", sentiment_label)
+        col2.metric("下一週期方向預估", pred_text)
+        col3.metric("模型信心度", f"{latest_prob * 100:.1f}%")
+        col4.metric("樣本外測試集勝率", f"{bt_metrics['win_rate']:.1f}%", f"總交易 {bt_metrics['total_trades']} 筆")
 
         st.markdown("---")
 
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(
-            x=df.index, open=df['Open'], high=df['High'],
-            low=df['Low'], close=df['Close'], name=symbol
-        ))
-        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], line=dict(color='orange', width=1), name="SMA 5"))
-        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], line=dict(color='cyan', width=1), name="SMA 20"))
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='gray', width=1, dash='dash'), name="布林上軌"))
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='gray', width=1, dash='dash'), name="布林下軌"))
-        
-        fig.update_layout(
-            title=f"{symbol} 即時 K 線圖 (時間間隔: {p_interval})",
-            xaxis_rangeslider_visible=False,
-            height=500,
-            template="plotly_dark"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        # 頁籤分類：技術圖表 vs 回測績效報告
+        tab1, tab2 = st.tabs(["📈 即時 K 線與指標圖", "📊 策略歷史回測驗證 (Out-of-Sample)"])
 
-        col_left, col_right = st.columns([1, 1])
-        
-        with col_left:
-            st.subheader(f"📰 {symbol} 最新相關新聞")
-            if news_data:
-                for item in news_data[:5]:
-                    score_color = "green" if item['score'] > 0 else ("red" if item['score'] < 0 else "gray")
-                    st.markdown(f"• [{item['title']}]({item['link']})")
-                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>🌐 譯/標：{item['title_zh']}</b>", unsafe_allow_html=True)
-                    st.markdown(
-                        f"&nbsp;&nbsp;&nbsp;&nbsp;來源: *{item['publisher']}* | "
-                        f"時間: `{item['pub_time']}` | "
-                        f"情緒分數: <span style='color:{score_color}'>{item['score']:+.2f}</span>", 
-                        unsafe_allow_html=True
-                    )
-                    st.markdown("<br>", unsafe_allow_html=True)
+        with tab1:
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(
+                x=df.index, open=df['Open'], high=df['High'],
+                low=df['Low'], close=df['Close'], name=symbol
+            ))
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], line=dict(color='orange', width=1), name="SMA 5"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], line=dict(color='cyan', width=1), name="SMA 20"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='gray', width=1, dash='dash'), name="布林上軌"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='gray', width=1, dash='dash'), name="布林下軌"))
+            
+            fig.update_layout(
+                title=f"{symbol} 即時 K 線圖 (時間間隔: {p_interval})",
+                xaxis_rangeslider_visible=False,
+                height=480,
+                template="plotly_dark"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            st.subheader("📋 策略回測績效總覽 (過濾低信心訊號 + 扣除手續費)")
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("策略總累積報酬率", f"{bt_metrics['total_ret']:+.2f}%")
+            m2.metric("買入持有 (B&H) 報酬率", f"{bt_metrics['bh_ret']:+.2f}%")
+            m3.metric("最大歷史回撤 (MDD)", f"{bt_metrics['max_dd']:.2f}%")
+            m4.metric("年化夏普比率", f"{bt_metrics['sharpe']:.2f}")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            if not trade_history.empty:
+                st.subheader("📝 近期進出場詳細交易明細")
+                display_trades = trade_history.copy()
+                display_trades['ret'] = display_trades['ret'].apply(lambda x: f"{x*100:+.2f}%")
+                display_trades['entry_price'] = display_trades['entry_price'].apply(lambda x: f"${x:.2f}")
+                display_trades.columns = ['進場時間', '方向', '進場價格', '淨報酬率 (含扣費)', '出場原因']
+                st.dataframe(display_trades.tail(10), use_container_width=True)
             else:
-                st.info("暫無該標的之即時新聞數據。")
+                st.info("在當前風控與信心度門檻下，歷史測試區間未觸發進場交易條件。")
 
-        with col_right:
-            st.subheader("💡 市場涵蓋與指標說明")
             st.info(f"""
-            * **當前選定標的**：**{symbol} ({company_name})**。
-            * **華人全市場支援**：
-              - **台股**：請輸入代號 (例如 `2330` 或 `2330.TW`)
-              - **港股**：請輸入代號加 `.HK` (例如 `0700.HK`)
-              - **A 股**：滬股 `.SS` / 深股 `.SZ` (例如 `600519.SS`)
-              - **美股與加密貨幣**：支援 24 小時盤前盤後跳動與即時預測
-            * **模型歷史測試準確率**：約為 **{test_acc * 100:.1f}%**。
+            📌 **當前回測條件邏輯**：
+            * **做多進場**：模型預估看漲信心 $> 55\%$ 且 價格在 SMA 5 之上。
+            * **做空進場**：模型預估看跌信心 $> 55\%$（看漲信心 $< 45\%$）且 價格在 SMA 5 之下。
+            * **風控條件**：固定持倉不超過 `{hold_periods}` 個 K 棒，設置停損 `{stop_loss_pct*100:.1f}%`、停利 `{take_profit_pct*100:.1f}%`，每筆扣除交易成本 `{tx_fee*100:.2f}%`。
             """)
     else:
-        st.error(f"⚠️ 無法找到代號 **{symbol}** 的交易數據。請確認代號格式是否正確（例如台股是否加上 `.TW`，港股 `.HK`）。")
+        st.error(f"⚠️ 無法取得 **{symbol}** 的交易資料或無法完成回測，請確認代號格式是否正確。")
 
-# 8. 執行主畫面渲染
+# 執行主畫面渲染
 render_dashboard(st.session_state.ticker_input, period, interval, include_extended)
