@@ -71,57 +71,39 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 熱門與常見標的繁體中文名稱字典映射
+# 2. 熱門與常見標的繁體中文名稱字典映射
 STOCK_NAME_MAP = {
     # 台股 (上市/上櫃)
-    "2330.TW": "台積電",
-    "2454.TW": "聯發科",
-    "2317.TW": "鴻海",
-    "2308.TW": "台達電",
-    "2382.TW": "廣達",
-    "3231.TW": "緯創",
-    "6669.TW": "緯穎",
-    "2379.TW": "瑞昱",
-    "3008.TW": "大立光",
-    "2303.TW": "聯電",
-    "2881.TW": "富邦金",
-    "2882.TW": "國泰金",
-    "2886.TW": "兆豐金",
-    "0050.TW": "元大台灣50",
-    "0056.TW": "元大高股息",
-    "00878.TW": "國泰永續高股息",
-    "00919.TW": "群益台灣精選高息",
-    "00929.TW": "復華台灣科技優息",
+    "2330.TW": "台積電", "2454.TW": "聯發科", "2317.TW": "鴻海", "2308.TW": "台達電",
+    "2382.TW": "廣達", "3231.TW": "緯創", "6669.TW": "緯穎", "2379.TW": "瑞昱",
+    "3008.TW": "大立光", "2303.TW": "聯電", "2881.TW": "富邦金", "2882.TW": "國泰金",
+    "2886.TW": "兆豐金", "0050.TW": "元大台灣50", "0056.TW": "元大高股息",
+    "00878.TW": "國泰永續高股息", "00919.TW": "群益台灣精選高息", "00929.TW": "復華台灣科技優息",
     
     # 美股熱門
-    "NVDA": "輝達",
-    "TSLA": "特斯拉",
-    "AAPL": "蘋果",
-    "MSFT": "微軟",
-    "GOOGL": "谷歌 (Alphabet)",
-    "AMZN": "亞馬遜",
-    "META": "Meta",
-    "AMD": "超微半導體",
-    "INTC": "英特爾",
-    "TSM": "台積電 ADR",
-    "ABVC": "ABVC BioPharma",
+    "NVDA": "輝達", "TSLA": "特斯拉", "AAPL": "蘋果", "MSFT": "微軟",
+    "GOOGL": "谷歌 (Alphabet)", "AMZN": "亞馬遜", "META": "Meta", "AMD": "超微半導體",
+    "INTC": "英特爾", "TSM": "台積電 ADR", "ABVC": "ABVC BioPharma",
     
     # 港股 / A股 / 加密貨幣
-    "0700.HK": "騰訊控股",
-    "9988.HK": "阿里巴巴",
-    "3690.HK": "美團",
-    "600519.SS": "貴州茅台",
-    "BTC-USD": "比特幣",
-    "ETH-USD": "以太幣"
+    "0700.HK": "騰訊控股", "9988.HK": "阿里巴巴", "3690.HK": "美團",
+    "600519.SS": "貴州茅台", "BTC-USD": "比特幣", "ETH-USD": "以太幣"
 }
 
-# 取得公司繁體中文名稱輔助函式
-def get_company_name(ticker, stock_info):
+# 預設 50 筆熱門與歷史標的清單
+DEFAULT_50_TICKERS = [
+    "2330.TW", "2454.TW", "2317.TW", "2308.TW", "2382.TW", "3231.TW", "6669.TW", "2379.TW",
+    "3008.TW", "2303.TW", "2881.TW", "2882.TW", "2886.TW", "0050.TW", "0056.TW", "00878.TW",
+    "00919.TW", "00929.TW", "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "AMD", "INTC", "TSM", "ABVC", "PLTR", "AMD", "NFLX", "DIS", "BA", "BABA",
+    "0700.HK", "9988.HK", "3690.HK", "1810.HK", "9888.HK", "600519.SS", "000858.SZ",
+    "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "DOGE-USD", "AVAX-USD", "LINK-USD"
+]
+
+def get_company_name(ticker, stock_info=None):
     ticker_upper = ticker.upper().strip()
     if ticker_upper in STOCK_NAME_MAP:
         return STOCK_NAME_MAP[ticker_upper]
-    
-    # 若不在字典中，嘗試自 stock.info 取得預設名稱
     if stock_info:
         name = stock_info.get('shortName') or stock_info.get('longName')
         if name:
@@ -130,10 +112,7 @@ def get_company_name(ticker, stock_info):
 
 # 初始化 Session State
 if 'quick_tickers' not in st.session_state:
-    st.session_state.quick_tickers = [
-        "2330.TW", "2454.TW", "2317.TW", "0700.HK", 
-        "600519.SS", "ABVC", "NVDA", "BTC-USD"
-    ]
+    st.session_state.quick_tickers = DEFAULT_50_TICKERS.copy()
 
 if 'selected_quick' not in st.session_state:
     st.session_state.selected_quick = "2454.TW"
@@ -161,18 +140,27 @@ def on_ticker_input_change():
     new_ticker = normalize_ticker(raw_ticker)
     if new_ticker:
         st.session_state.ticker_input = new_ticker
-        if new_ticker not in st.session_state.quick_tickers:
-            st.session_state.quick_tickers.append(new_ticker)
-            if len(st.session_state.quick_tickers) > 50:
-                st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
+        # 若不在清單內，推入最前排並保持最多 50 筆
+        if new_ticker in st.session_state.quick_tickers:
+            st.session_state.quick_tickers.remove(new_ticker)
+        st.session_state.quick_tickers.insert(0, new_ticker)
+        st.session_state.quick_tickers = st.session_state.quick_tickers[:50]
         st.session_state.selected_quick = new_ticker
 
 def on_selectbox_change():
     sel = st.session_state.selectbox_key
     if sel != "自訂輸入":
-        # 顯示格式為 "2454.TW (聯發科)"，拆出純代號
         clean_ticker = sel.split(" ")[0]
         st.session_state.ticker_input = clean_ticker
+
+# 刪除指定歷史紀錄的 Callback
+def delete_ticker(ticker_to_remove):
+    if ticker_to_remove in st.session_state.quick_tickers:
+        st.session_state.quick_tickers.remove(ticker_to_remove)
+        # 如果刪除的是當前選擇的標的，切換到第一個
+        if st.session_state.ticker_input == ticker_to_remove:
+            st.session_state.ticker_input = st.session_state.quick_tickers[0] if st.session_state.quick_tickers else ""
+            st.session_state.selected_quick = st.session_state.ticker_input
 
 # 側邊欄設定
 st.sidebar.header("🔍 全球標的與回測設定")
@@ -187,7 +175,7 @@ current_selected_formatted = f"{st.session_state.selected_quick} ({STOCK_NAME_MA
 default_idx = formatted_options.index(current_selected_formatted) if current_selected_formatted in formatted_options else 0
 
 st.sidebar.selectbox(
-    "🔥 熱門與歷史搜尋", 
+    f"🔥 熱門與歷史搜尋 (共 {len(st.session_state.quick_tickers)} 筆)", 
     options=formatted_options, 
     index=default_idx,
     key="selectbox_key",
@@ -200,6 +188,16 @@ st.sidebar.text_input(
     key="ticker_input_key",
     on_change=on_ticker_input_change
 )
+
+# 歷史紀錄管理摺疊選單 (允許刪除單筆紀錄)
+with st.sidebar.expander("🗑️ 管理歷史搜尋清單", expanded=False):
+    st.caption("點擊按鈕可自清單中移除特定代號：")
+    for t in list(st.session_state.quick_tickers):
+        c1, c2 = st.columns([3, 1])
+        c1.text(f"{t} ({STOCK_NAME_MAP.get(t, '')})")
+        if c2.button("刪除", key=f"del_{t}"):
+            delete_ticker(t)
+            st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ 策略與風控參數")
@@ -339,7 +337,6 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
         use_prepost = extended if ("." not in ticker or ticker.endswith("-USD")) else False
         df = stock.history(period=period, interval=interval, prepost=use_prepost)
         
-        # 取得公司名稱（優先對照繁體中文名稱）
         stock_info = None
         try:
             stock_info = stock.info
@@ -385,7 +382,7 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
 @st.fragment(run_every=refresh_rate)
 def render_dashboard(symbol, p_period, p_interval, p_extended):
     if not symbol:
-        st.warning("請在左側選單輸入股票代號。")
+        st.warning("請在左側選單輸入或選擇股票代號。")
         return
 
     df, latest_pred, latest_prob, bt_metrics, trade_history, company_name = fetch_and_predict_dynamic(
@@ -393,7 +390,6 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None and bt_metrics is not None:
-        # 標題呈現：⚡ 2454.TW (聯發科)
         st.markdown(f"""
         <div class="title-wrapper">
             <span class="symbol-text">⚡ {symbol}</span>
