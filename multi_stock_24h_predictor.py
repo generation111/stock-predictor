@@ -8,8 +8,9 @@ import plotly.graph_objects as go
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import nltk
 import time
+import requests
 
-# 1. 初始化 NLTK Vader 詞庫
+# 1. 初始化 NLTK Vader 詞庫 (自動下載並防錯)
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
@@ -32,7 +33,7 @@ interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], i
 period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
 refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
 
-# 3. 新聞情緒分析模組
+# 3. 新聞情緒分析模組 (支援新舊版 yfinance API 與相容抓取)
 def get_news_sentiment(ticker_symbol):
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -46,15 +47,32 @@ def get_news_sentiment(ticker_symbol):
         processed_news = []
         
         for item in news_list[:8]:
-            title = item.get('title', '')
+            title = ""
+            publisher = "Unknown"
+            link = "#"
+
+            # 兼容 yfinance 新版 (content 字典) 與舊版格式
+            if isinstance(item, dict) and 'content' in item:
+                content = item.get('content', {})
+                title = content.get('title', '')
+                publisher = content.get('provider', {}).get('displayName', 'Unknown')
+                click_through_url = content.get('clickThroughUrl', {})
+                canonical_url = content.get('canonicalUrl', {})
+                link = click_through_url.get('url') or canonical_url.get('url') or '#'
+            else:
+                title = item.get('title', '')
+                publisher = item.get('publisher', 'Unknown')
+                link = item.get('link', '#')
+
             if not title:
                 continue
+            
             score = sia.polarity_scores(title)['compound']
             compound_scores.append(score)
             processed_news.append({
                 'title': title,
-                'publisher': item.get('publisher', 'Unknown'),
-                'link': item.get('link', '#'),
+                'publisher': publisher,
+                'link': link,
                 'score': score
             })
         
@@ -149,7 +167,7 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
     except Exception:
         return None, None, None, None, 0.0, [], None
 
-# 6. 主畫面局部刷新模組（使用 st.fragment 實現無縫平滑更新）
+# 6. 主畫面局部刷新模組
 @st.fragment(run_every=refresh_rate)
 def render_dashboard(symbol, p_period, p_interval, p_extended):
     if not symbol:
