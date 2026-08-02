@@ -3,9 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
-import datetime
 
 # 1. 頁面配置與 CSS 注入
 st.set_page_config(
@@ -14,7 +12,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 注入 CSS 修復代號隱形與標題呈現問題
 st.markdown("""
 <style>
     /* 修正頂部邊界 */
@@ -25,7 +22,7 @@ st.markdown("""
         padding-right: 1rem !important;
     }
     
-    /* 股票標題區塊：確保代號與名稱均能強效顯示 */
+    /* 股票標題區塊 */
     .title-wrapper {
         margin-top: 0.2rem !important;
         margin-bottom: 1rem !important;
@@ -35,15 +32,15 @@ st.markdown("""
     .symbol-text {
         font-size: 1.8rem !important;
         font-weight: 800 !important;
-        color: #1E88E5 !important; /* 使用顯眼的藍色，確保淺色與深色背景下都能清晰顯示 */
+        color: #1E88E5 !important;
         margin-right: 8px !important;
         display: inline-block !important;
     }
     
     .name-text {
-        font-size: 1.2rem !important;
+        font-size: 1.3rem !important;
         font-weight: 600 !important;
-        color: #757575 !important;
+        color: #424242 !important;
         display: inline-block !important;
         word-break: break-word !important;
     }
@@ -56,7 +53,6 @@ st.markdown("""
         border: 1px solid rgba(0, 0, 0, 0.08);
     }
 
-    /* 響應式微調 */
     @media (max-width: 900px) {
         .main .block-container {
             padding-top: 2.2rem !important;
@@ -69,31 +65,83 @@ st.markdown("""
         }
         
         .name-text {
-            font-size: 1.0rem !important;
+            font-size: 1.1rem !important;
         }
     }
 </style>
 """, unsafe_allow_html=True)
 
+# 熱門與常見標的繁體中文名稱字典映射
+STOCK_NAME_MAP = {
+    # 台股 (上市/上櫃)
+    "2330.TW": "台積電",
+    "2454.TW": "聯發科",
+    "2317.TW": "鴻海",
+    "2308.TW": "台達電",
+    "2382.TW": "廣達",
+    "3231.TW": "緯創",
+    "6669.TW": "緯穎",
+    "2379.TW": "瑞昱",
+    "3008.TW": "大立光",
+    "2303.TW": "聯電",
+    "2881.TW": "富邦金",
+    "2882.TW": "國泰金",
+    "2886.TW": "兆豐金",
+    "0050.TW": "元大台灣50",
+    "0056.TW": "元大高股息",
+    "00878.TW": "國泰永續高股息",
+    "00919.TW": "群益台灣精選高息",
+    "00929.TW": "復華台灣科技優息",
+    
+    # 美股熱門
+    "NVDA": "輝達",
+    "TSLA": "特斯拉",
+    "AAPL": "蘋果",
+    "MSFT": "微軟",
+    "GOOGL": "谷歌 (Alphabet)",
+    "AMZN": "亞馬遜",
+    "META": "Meta",
+    "AMD": "超微半導體",
+    "INTC": "英特爾",
+    "TSM": "台積電 ADR",
+    "ABVC": "ABVC BioPharma",
+    
+    # 港股 / A股 / 加密貨幣
+    "0700.HK": "騰訊控股",
+    "9988.HK": "阿里巴巴",
+    "3690.HK": "美團",
+    "600519.SS": "貴州茅台",
+    "BTC-USD": "比特幣",
+    "ETH-USD": "以太幣"
+}
+
+# 取得公司繁體中文名稱輔助函式
+def get_company_name(ticker, stock_info):
+    ticker_upper = ticker.upper().strip()
+    if ticker_upper in STOCK_NAME_MAP:
+        return STOCK_NAME_MAP[ticker_upper]
+    
+    # 若不在字典中，嘗試自 stock.info 取得預設名稱
+    if stock_info:
+        name = stock_info.get('shortName') or stock_info.get('longName')
+        if name:
+            return name
+    return ticker_upper
+
 # 初始化 Session State
 if 'quick_tickers' not in st.session_state:
     st.session_state.quick_tickers = [
-        "2330.TW",   # 台積電
-        "2454.TW",   # 聯發科
-        "0700.HK",   # 騰訊控股
-        "600519.SS", # 貴州茅台
-        "ABVC",      # 美股 ABVC
-        "NVDA",      # 美股 輝達
-        "BTC-USD"    # 比特幣
+        "2330.TW", "2454.TW", "2317.TW", "0700.HK", 
+        "600519.SS", "ABVC", "NVDA", "BTC-USD"
     ]
 
 if 'selected_quick' not in st.session_state:
-    st.session_state.selected_quick = "2330.TW"
+    st.session_state.selected_quick = "2454.TW"
 
 if 'ticker_input' not in st.session_state:
-    st.session_state.ticker_input = "2330.TW"
+    st.session_state.ticker_input = "2454.TW"
 
-# 代號自動正規化輔助函式
+# 代號正規化
 def normalize_ticker(symbol):
     symbol = symbol.upper().strip()
     if not symbol:
@@ -122,17 +170,25 @@ def on_ticker_input_change():
 def on_selectbox_change():
     sel = st.session_state.selectbox_key
     if sel != "自訂輸入":
-        st.session_state.ticker_input = sel
+        # 顯示格式為 "2454.TW (聯發科)"，拆出純代號
+        clean_ticker = sel.split(" ")[0]
+        st.session_state.ticker_input = clean_ticker
 
-# 側邊欄：市場與策略回測設定
+# 側邊欄設定
 st.sidebar.header("🔍 全球標的與回測設定")
 
-options = ["自訂輸入"] + st.session_state.quick_tickers
-default_idx = options.index(st.session_state.selected_quick) if st.session_state.selected_quick in options else 0
+# 選單項目加入繁體中文名稱備註
+formatted_options = ["自訂輸入"] + [
+    f"{t} ({STOCK_NAME_MAP.get(t, '')})" if t in STOCK_NAME_MAP else t 
+    for t in st.session_state.quick_tickers
+]
+
+current_selected_formatted = f"{st.session_state.selected_quick} ({STOCK_NAME_MAP.get(st.session_state.selected_quick, '')})" if st.session_state.selected_quick in STOCK_NAME_MAP else st.session_state.selected_quick
+default_idx = formatted_options.index(current_selected_formatted) if current_selected_formatted in formatted_options else 0
 
 st.sidebar.selectbox(
     "🔥 熱門與歷史搜尋", 
-    options=options, 
+    options=formatted_options, 
     index=default_idx,
     key="selectbox_key",
     on_change=on_selectbox_change
@@ -158,7 +214,7 @@ interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], i
 period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
 refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
 
-# 技術指標計算
+# 指標計算
 def compute_indicators(df):
     data = df.copy()
     data['Returns'] = data['Close'].pct_change()
@@ -186,7 +242,7 @@ def compute_indicators(df):
     
     return data.dropna()
 
-# 回測核心引擎
+# 回測引擎
 def run_backtest(df, model, feature_cols, hold_p, sl, tp, fee):
     df_bt = df.copy()
     X = df_bt[feature_cols]
@@ -208,7 +264,6 @@ def run_backtest(df, model, feature_cols, hold_p, sl, tp, fee):
             signals.append(0)
             
     df_bt['Signal'] = signals
-    
     trades = []
     equity_curve = [1.0]
     
@@ -218,7 +273,6 @@ def run_backtest(df, model, feature_cols, hold_p, sl, tp, fee):
         if sig != 0:
             entry_price = df_bt['Close'].iloc[i]
             entry_time = df_bt.index[i]
-            
             trade_ret = 0.0
             exit_reason = "Time Exit"
             
@@ -285,14 +339,17 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
         use_prepost = extended if ("." not in ticker or ticker.endswith("-USD")) else False
         df = stock.history(period=period, interval=interval, prepost=use_prepost)
         
-        if df.empty or len(df) < 30:
-            return None, None, None, None, None, ticker
-            
+        # 取得公司名稱（優先對照繁體中文名稱）
+        stock_info = None
         try:
-            company_name = stock.info.get('shortName') or stock.info.get('longName') or ticker
+            stock_info = stock.info
         except Exception:
-            company_name = ticker
-        
+            pass
+        company_name = get_company_name(ticker, stock_info)
+
+        if df.empty or len(df) < 30:
+            return None, None, None, None, None, company_name
+            
         df = compute_indicators(df)
         feature_cols = ['Returns', 'SMA_5', 'SMA_20', 'RSI', 'MACD', 'MACD_Signal', 'BB_PctB', 'Volatility']
         
@@ -321,7 +378,8 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
         
         return df, latest_pred, latest_prob, bt_metrics, trade_history, company_name
     except Exception:
-        return None, None, None, None, None, ticker
+        company_name = STOCK_NAME_MAP.get(ticker.upper().strip(), ticker)
+        return None, None, None, None, None, company_name
 
 # 主畫面渲染
 @st.fragment(run_every=refresh_rate)
@@ -335,7 +393,7 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None and bt_metrics is not None:
-        # 重構標題 HTML：使用強制可視的藍色 (symbol-text)，確保股票代號絕對能顯示
+        # 標題呈現：⚡ 2454.TW (聯發科)
         st.markdown(f"""
         <div class="title-wrapper">
             <span class="symbol-text">⚡ {symbol}</span>
@@ -348,7 +406,6 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         price_change = latest_price - prev_price
         pct_change = (price_change / prev_price) * 100
 
-        # 直立式自適應網格：2x2 排版
         col1, col2 = st.columns(2)
         with col1:
             st.metric("最新報價", f"${latest_price:.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
@@ -366,7 +423,7 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
             fig = go.Figure()
             fig.add_trace(go.Candlestick(
                 x=df.index, open=df['Open'], high=df['High'],
-                low=df['Low'], close=df['Close'], name=symbol
+                low=df['Low'], close=df['Close'], name=company_name
             ))
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], line=dict(color='orange', width=1), name="SMA5"))
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], line=dict(color='cyan', width=1), name="SMA20"))
@@ -403,7 +460,7 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
                 st.info("當前條件下，歷史測試區間未觸發交易。")
 
     else:
-        st.error(f"⚠️ 無法取得 **{symbol}** 資料，請確認代號與網路狀態。")
+        st.error(f"⚠️ 無法取得 **{symbol} ({company_name})** 資料，請確認代號與網路狀態。")
 
 # 執行主畫面渲染
 render_dashboard(st.session_state.ticker_input, period, interval, include_extended)
