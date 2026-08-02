@@ -14,48 +14,39 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 注入修復股票名稱顯示不完整的 CSS
+# 注入修復標題顯示與字體大小的 CSS
 st.markdown("""
 <style>
-    /* 修正頂部容器 Margin / Padding */
+    /* 修正頂部容器 Margin / Padding，防止邊界擠壓 */
     .main .block-container {
         padding-top: 2.2rem !important;
         padding-bottom: 1.5rem !important;
-        padding-left: 0.8rem !important;
-        padding-right: 0.8rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
     }
     
-    /* 股票標題彈性佈局容器 */
-    .stock-header-wrapper {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 6px 10px;
+    /* 標題專用容器：確保代號與公司名稱清晰、不縮小、不擠壓 */
+    .title-box {
         margin-top: 0.5rem !important;
-        margin-bottom: 1rem !important;
-        width: 100%;
-        overflow: hidden;
+        margin-bottom: 1.2rem !important;
+        line-height: 1.5 !important;
     }
     
-    .stock-symbol-text {
-        font-size: 1.6rem !important;
+    .title-symbol {
+        font-size: 1.8rem !important;
         font-weight: 800 !important;
         color: #FFFFFF !important;
-        line-height: 1.2 !important;
-        white-space: nowrap;
+        margin-right: 8px !important;
     }
     
-    .stock-name-text {
-        font-size: 1.1rem !important;
+    .title-name {
+        font-size: 1.2rem !important;
         font-weight: 500 !important;
-        color: #A0A0A0 !important;
-        line-height: 1.2 !important;
-        word-break: break-word; /* 允許長文字自動換行 */
-        overflow-wrap: break-word;
-        max-width: 100%;
+        color: #CCCCCC !important;
+        word-break: break-word !important;
     }
 
-    /* 針對手機和平板直立畫面的 RWD 調優 */
+    /* RWD 適應（手機與平板直立） */
     @media (max-width: 900px) {
         .main .block-container {
             padding-top: 2.5rem !important;
@@ -63,24 +54,23 @@ st.markdown("""
             padding-right: 0.6rem !important;
         }
         
-        .stock-symbol-text {
-            font-size: 1.35rem !important;
+        .title-symbol {
+            font-size: 1.4rem !important;
         }
         
-        .stock-name-text {
-            font-size: 0.95rem !important;
+        .title-name {
+            font-size: 1.0rem !important;
         }
         
-        /* 讓 metric 卡片在直立螢幕上有清晰的卡片外觀 */
+        /* Metric 卡片外觀優化 */
         [data-testid="stMetric"] {
             background-color: rgba(255, 255, 255, 0.05);
             border-radius: 10px;
-            padding: 8px 12px !important;
+            padding: 10px 12px !important;
             margin-bottom: 8px;
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
-        /* 頁籤微調為適合觸控點擊 */
         .stTabs [data-baseweb="tab"] {
             height: 42px !important;
             font-size: 14px !important;
@@ -202,7 +192,7 @@ def compute_indicators(df):
     
     return data.dropna()
 
-# 回測核心引擎 (Backtest Engine)
+# 回測核心引擎
 def run_backtest(df, model, feature_cols, hold_p, sl, tp, fee):
     df_bt = df.copy()
     X = df_bt[feature_cols]
@@ -339,7 +329,7 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
     except Exception:
         return None, None, None, None, None, ticker
 
-# 主畫面渲染 (修復股票名稱顯示完整性)
+# 主畫面渲染
 @st.fragment(run_every=refresh_rate)
 def render_dashboard(symbol, p_period, p_interval, p_extended):
     if not symbol:
@@ -351,11 +341,11 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None and bt_metrics is not None:
-        # 使用自適應 Flex 容器，確保代號與過長的公司名稱皆可彈性自動換行並完整顯示
+        # 重構後的渲染結構：確保代號與全名均能以正確字型大放顯示
         st.markdown(f"""
-        <div class="stock-header-wrapper">
-            <span class="stock-symbol-text">⚡ {symbol}</span>
-            <span class="stock-name-text">({company_name})</span>
+        <div class="title-box">
+            <span class="title-symbol">⚡ {symbol}</span>
+            <span class="title-name">({company_name})</span>
         </div>
         """, unsafe_allow_html=True)
         
