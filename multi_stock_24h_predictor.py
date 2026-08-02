@@ -83,21 +83,24 @@ STOCK_NAME_MAP = {
     # 美股熱門
     "NVDA": "輝達", "TSLA": "特斯拉", "AAPL": "蘋果", "MSFT": "微軟",
     "GOOGL": "谷歌 (Alphabet)", "AMZN": "亞馬遜", "META": "Meta", "AMD": "超微半導體",
-    "INTC": "英特爾", "TSM": "台積電 ADR", "ABVC": "ABVC BioPharma",
+    "INTC": "英特爾", "TSM": "台積電 ADR", "ABVC": "ABVC BioPharma", "PLTR": "Palantir",
+    "NFLX": "網飛", "DIS": "迪士尼", "BA": "波音", "BABA": "阿里巴巴 ADR",
     
     # 港股 / A股 / 加密貨幣
-    "0700.HK": "騰訊控股", "9988.HK": "阿里巴巴", "3690.HK": "美團",
-    "600519.SS": "貴州茅台", "BTC-USD": "比特幣", "ETH-USD": "以太幣"
+    "0700.HK": "騰訊控股", "9988.HK": "阿里巴巴", "3690.HK": "美團", "1810.HK": "小米集團", "9888.HK": "百度",
+    "600519.SS": "貴州茅台", "000858.SZ": "五糧液",
+    "BTC-USD": "比特幣", "ETH-USD": "以太幣", "SOL-USD": "Solana", "BNB-USD": "幣安幣",
+    "XRP-USD": "瑞波幣", "DOGE-USD": "狗狗幣", "AVAX-USD": "Avalanche", "LINK-USD": "Chainlink"
 }
 
-# 預設 50 筆熱門與歷史標的清單
+# 預設 50 筆無重複的熱門與歷史標的清單
 DEFAULT_50_TICKERS = [
     "2330.TW", "2454.TW", "2317.TW", "2308.TW", "2382.TW", "3231.TW", "6669.TW", "2379.TW",
     "3008.TW", "2303.TW", "2881.TW", "2882.TW", "2886.TW", "0050.TW", "0056.TW", "00878.TW",
     "00919.TW", "00929.TW", "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-    "AMD", "INTC", "TSM", "ABVC", "PLTR", "AMD", "NFLX", "DIS", "BA", "BABA",
-    "0700.HK", "9988.HK", "3690.HK", "1810.HK", "9888.HK", "600519.SS", "000858.SZ",
-    "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "DOGE-USD", "AVAX-USD", "LINK-USD"
+    "AMD", "INTC", "TSM", "ABVC", "PLTR", "NFLX", "DIS", "BA", "BABA", "0700.HK",
+    "9988.HK", "3690.HK", "1810.HK", "9888.HK", "600519.SS", "000858.SZ", "BTC-USD",
+    "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "DOGE-USD", "AVAX-USD", "LINK-USD"
 ]
 
 def get_company_name(ticker, stock_info=None):
@@ -110,9 +113,14 @@ def get_company_name(ticker, stock_info=None):
             return name
     return ticker_upper
 
+# 保持順序的清單去重函式
+def deduplicate_list(input_list):
+    seen = set()
+    return [x for x in input_list if not (x in seen or seen.add(x))]
+
 # 初始化 Session State
 if 'quick_tickers' not in st.session_state:
-    st.session_state.quick_tickers = DEFAULT_50_TICKERS.copy()
+    st.session_state.quick_tickers = deduplicate_list(DEFAULT_50_TICKERS)
 
 if 'selected_quick' not in st.session_state:
     st.session_state.selected_quick = "2454.TW"
@@ -140,11 +148,11 @@ def on_ticker_input_change():
     new_ticker = normalize_ticker(raw_ticker)
     if new_ticker:
         st.session_state.ticker_input = new_ticker
-        # 若不在清單內，推入最前排並保持最多 50 筆
+        # 移除重複並推到最前方
         if new_ticker in st.session_state.quick_tickers:
             st.session_state.quick_tickers.remove(new_ticker)
         st.session_state.quick_tickers.insert(0, new_ticker)
-        st.session_state.quick_tickers = st.session_state.quick_tickers[:50]
+        st.session_state.quick_tickers = deduplicate_list(st.session_state.quick_tickers)[:50]
         st.session_state.selected_quick = new_ticker
 
 def on_selectbox_change():
@@ -157,13 +165,15 @@ def on_selectbox_change():
 def delete_ticker(ticker_to_remove):
     if ticker_to_remove in st.session_state.quick_tickers:
         st.session_state.quick_tickers.remove(ticker_to_remove)
-        # 如果刪除的是當前選擇的標的，切換到第一個
         if st.session_state.ticker_input == ticker_to_remove:
             st.session_state.ticker_input = st.session_state.quick_tickers[0] if st.session_state.quick_tickers else ""
             st.session_state.selected_quick = st.session_state.ticker_input
 
 # 側邊欄設定
 st.sidebar.header("🔍 全球標的與回測設定")
+
+# 確保列表隨時無重複
+st.session_state.quick_tickers = deduplicate_list(st.session_state.quick_tickers)
 
 # 選單項目加入繁體中文名稱備註
 formatted_options = ["自訂輸入"] + [
@@ -189,13 +199,13 @@ st.sidebar.text_input(
     on_change=on_ticker_input_change
 )
 
-# 歷史紀錄管理摺疊選單 (允許刪除單筆紀錄)
+# 歷史紀錄管理摺疊選單 (加上索引 i 確保 key 唯一性)
 with st.sidebar.expander("🗑️ 管理歷史搜尋清單", expanded=False):
     st.caption("點擊按鈕可自清單中移除特定代號：")
-    for t in list(st.session_state.quick_tickers):
+    for i, t in enumerate(st.session_state.quick_tickers):
         c1, c2 = st.columns([3, 1])
         c1.text(f"{t} ({STOCK_NAME_MAP.get(t, '')})")
-        if c2.button("刪除", key=f"del_{t}"):
+        if c2.button("刪除", key=f"del_{i}_{t}"):
             delete_ticker(t)
             st.rerun()
 
