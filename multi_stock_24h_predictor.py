@@ -10,6 +10,7 @@ import nltk
 import time
 import datetime
 import requests
+from deep_translator import GoogleTranslator
 
 # 1. 初始化 NLTK Vader 詞庫 (自動下載並防錯)
 try:
@@ -34,7 +35,17 @@ interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], i
 period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
 refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
 
-# 3. 新聞情緒分析模組 (支援新舊版 yfinance API 與發布時間解析)
+# 翻譯輔助函式 (翻譯為繁體中文)
+def translate_to_zh_tw(text):
+    if not text:
+        return ""
+    try:
+        translated = GoogleTranslator(source='auto', target='zh-TW').translate(text)
+        return translated
+    except Exception:
+        return text  # 若翻譯失敗則退回原英文
+
+# 3. 新聞情緒分析模組 (支援新舊版 yfinance API、發布時間與繁體中文翻譯)
 def get_news_sentiment(ticker_symbol):
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -62,11 +73,10 @@ def get_news_sentiment(ticker_symbol):
                 canonical_url = content.get('canonicalUrl', {})
                 link = click_through_url.get('url') or canonical_url.get('url') or '#'
                 
-                # 取得時間 (ISO 格式或時間戳)
+                # 取得時間
                 pub_date = content.get('pubDate')
                 if pub_date:
                     try:
-                        # 處理 ISO 格式字串如 "2026-08-02T10:30:00Z"
                         dt = datetime.datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
                         pub_time_str = dt.strftime('%Y-%m-%d %H:%M')
                     except Exception:
@@ -76,7 +86,6 @@ def get_news_sentiment(ticker_symbol):
                 publisher = item.get('publisher', 'Unknown')
                 link = item.get('link', '#')
                 
-                # 舊版 providerPublishTime 戳記轉換
                 pub_ts = item.get('providerPublishTime')
                 if pub_ts:
                     try:
@@ -87,10 +96,14 @@ def get_news_sentiment(ticker_symbol):
             if not title:
                 continue
             
+            # 即時繁體中文翻譯
+            title_zh = translate_to_zh_tw(title)
+            
             score = sia.polarity_scores(title)['compound']
             compound_scores.append(score)
             processed_news.append({
                 'title': title,
+                'title_zh': title_zh,
                 'publisher': publisher,
                 'link': link,
                 'score': score,
@@ -251,13 +264,18 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
             if news_data:
                 for item in news_data[:5]:
                     score_color = "green" if item['score'] > 0 else ("red" if item['score'] < 0 else "gray")
+                    # 顯示原新聞標題 (含連結)
                     st.markdown(f"• [{item['title']}]({item['link']})")
+                    # 顯示繁體中文翻譯
+                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>🈳 譯：{item['title_zh']}</b>", unsafe_allow_html=True)
+                    # 顯示發布來源、時間與情緒得分
                     st.markdown(
                         f"&nbsp;&nbsp;&nbsp;&nbsp;來源: *{item['publisher']}* | "
                         f"時間: `{item['pub_time']}` | "
                         f"情緒分數: <span style='color:{score_color}'>{item['score']:+.2f}</span>", 
                         unsafe_allow_html=True
                     )
+                    st.markdown("<br>", unsafe_allow_html=True)
             else:
                 st.info("暫無該個股之即時新聞數據。")
 
