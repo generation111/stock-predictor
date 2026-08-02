@@ -5,3 +5,6 @@ yfinance
 plotly
 scikit-learn
 nltk
+requests
+beautifulsoup4
+
