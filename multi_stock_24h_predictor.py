@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import nltk
 import time
+import datetime
 import requests
 
 # 1. 初始化 NLTK Vader 詞庫 (自動下載並防錯)
@@ -33,7 +34,7 @@ interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], i
 period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
 refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
 
-# 3. 新聞情緒分析模組 (支援新舊版 yfinance API 與相容抓取)
+# 3. 新聞情緒分析模組 (支援新舊版 yfinance API 與發布時間解析)
 def get_news_sentiment(ticker_symbol):
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -50,6 +51,7 @@ def get_news_sentiment(ticker_symbol):
             title = ""
             publisher = "Unknown"
             link = "#"
+            pub_time_str = "未知時間"
 
             # 兼容 yfinance 新版 (content 字典) 與舊版格式
             if isinstance(item, dict) and 'content' in item:
@@ -59,10 +61,28 @@ def get_news_sentiment(ticker_symbol):
                 click_through_url = content.get('clickThroughUrl', {})
                 canonical_url = content.get('canonicalUrl', {})
                 link = click_through_url.get('url') or canonical_url.get('url') or '#'
+                
+                # 取得時間 (ISO 格式或時間戳)
+                pub_date = content.get('pubDate')
+                if pub_date:
+                    try:
+                        # 處理 ISO 格式字串如 "2026-08-02T10:30:00Z"
+                        dt = datetime.datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
+                        pub_time_str = dt.strftime('%Y-%m-%d %H:%M')
+                    except Exception:
+                        pub_time_str = str(pub_date)[:16]
             else:
                 title = item.get('title', '')
                 publisher = item.get('publisher', 'Unknown')
                 link = item.get('link', '#')
+                
+                # 舊版 providerPublishTime 戳記轉換
+                pub_ts = item.get('providerPublishTime')
+                if pub_ts:
+                    try:
+                        pub_time_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d %H:%M')
+                    except Exception:
+                        pass
 
             if not title:
                 continue
@@ -73,7 +93,8 @@ def get_news_sentiment(ticker_symbol):
                 'title': title,
                 'publisher': publisher,
                 'link': link,
-                'score': score
+                'score': score,
+                'pub_time': pub_time_str
             })
         
         avg_score = float(np.mean(compound_scores)) if compound_scores else 0.0
@@ -231,7 +252,12 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
                 for item in news_data[:5]:
                     score_color = "green" if item['score'] > 0 else ("red" if item['score'] < 0 else "gray")
                     st.markdown(f"• [{item['title']}]({item['link']})")
-                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;來源: *{item['publisher']}* | 情緒分數: <span style='color:{score_color}'>{item['score']:+.2f}</span>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;來源: *{item['publisher']}* | "
+                        f"時間: `{item['pub_time']}` | "
+                        f"情緒分數: <span style='color:{score_color}'>{item['score']:+.2f}</span>", 
+                        unsafe_allow_html=True
+                    )
             else:
                 st.info("暫無該個股之即時新聞數據。")
 
