@@ -7,9 +7,7 @@ from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import nltk
-import time
 import datetime
-import requests
 from deep_translator import GoogleTranslator
 
 # 1. 初始化 NLTK Vader 詞庫
@@ -24,7 +22,32 @@ st.set_page_config(page_title="美股 24H 實時走勢預測工具", layout="wid
 if 'quick_tickers' not in st.session_state:
     st.session_state.quick_tickers = ["ABVC", "TSLA", "NVDA", "AAPL", "AMD", "AMZN", "MSFT", "GOOGL", "META"]
 
-# 2. 翻譯輔助函式 (加上快取以提升效能，避免重複請求 Google 翻譯)
+if 'selected_quick' not in st.session_state:
+    st.session_state.selected_quick = "ABVC"
+
+if 'ticker_input' not in st.session_state:
+    st.session_state.ticker_input = "ABVC"
+
+# Callback: 當文字輸入框改變時，立即更新 Session State 及歷史清單
+def on_ticker_input_change():
+    new_ticker = st.session_state.ticker_input_key.upper().strip()
+    if new_ticker:
+        st.session_state.ticker_input = new_ticker
+        # 追加至歷史選單
+        if new_ticker not in st.session_state.quick_tickers:
+            st.session_state.quick_tickers.append(new_ticker)
+            if len(st.session_state.quick_tickers) > 50:
+                st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
+        # 同步更新下拉選單選擇項目
+        st.session_state.selected_quick = new_ticker
+
+# Callback: 當下拉選單選擇改變時，同步更新文字輸入框
+def on_selectbox_change():
+    sel = st.session_state.selectbox_key
+    if sel != "自訂輸入":
+        st.session_state.ticker_input = sel
+
+# 2. 翻譯輔助函式
 @st.cache_data(ttl=3600, show_spinner=False)
 def translate_to_zh_tw(text):
     if not text:
@@ -33,34 +56,36 @@ def translate_to_zh_tw(text):
         translated = GoogleTranslator(source='auto', target='zh-TW').translate(text)
         return translated
     except Exception:
-        return text  # 翻譯失敗則退回原英文
+        return text
 
 # 3. 側邊欄：股票代號與參數設定
 st.sidebar.header("🔍 美股代號與參數設定")
 
-auto_add_history = st.sidebar.checkbox("自動追加查詢個股至選單", value=True)
+# 下拉選單：使用 key 與 callback 確保即時同步
+options = ["自訂輸入"] + st.session_state.quick_tickers
+default_idx = options.index(st.session_state.selected_quick) if st.session_state.selected_quick in options else 0
 
-selected_quick = st.sidebar.selectbox(
+st.sidebar.selectbox(
     "🔥 熱門與歷史搜尋個股 (上限50項)", 
-    options=["自訂輸入"] + st.session_state.quick_tickers, 
-    index=1
+    options=options, 
+    index=default_idx,
+    key="selectbox_key",
+    on_change=on_selectbox_change
 )
 
-default_ticker = "ABVC" if selected_quick == "自訂輸入" else selected_quick
-ticker_input = st.sidebar.text_input("輸入美股股票代號 (例如: ABVC, TSLA)", value=default_ticker).upper().strip()
+# 文字輸入框：使用 key 與 callback 確保 Enter 瞬間更新清單
+st.sidebar.text_input(
+    "輸入美股股票代號 (例如: ABVC, TSLA)", 
+    value=st.session_state.ticker_input,
+    key="ticker_input_key",
+    on_change=on_ticker_input_change
+)
 
 st.sidebar.markdown("---")
 include_extended = st.sidebar.checkbox("開啟夜盤與延長交易時段 (24H Extended)", value=True)
 interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], index=1)
 period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
 refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
-
-# 動態追加合法代號至歷史清單的輔助函式
-def update_ticker_history(ticker):
-    if auto_add_history and ticker and ticker not in st.session_state.quick_tickers:
-        st.session_state.quick_tickers.append(ticker)
-        if len(st.session_state.quick_tickers) > 50:
-            st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
 
 # 4. 新聞情緒分析模組
 def get_news_sentiment(ticker_symbol):
@@ -214,9 +239,6 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None:
-        # 成功抓到資料，確保將該合法股票寫入選單清單
-        update_ticker_history(symbol)
-
         st.title(f"⚡ {symbol} ({company_name}) 全時段實時走勢預測")
         
         latest_price = df['Close'].iloc[-1]
@@ -286,4 +308,4 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         st.error(f"⚠️ 無法找到代號 **{symbol}** 的交易數據。請檢查股票代號是否正確，或嘗試更換時間間隔。")
 
 # 8. 執行主畫面渲染
-render_dashboard(ticker_input, period, interval, include_extended)
+render_dashboard(st.session_state.ticker_input, period, interval, include_extended)
