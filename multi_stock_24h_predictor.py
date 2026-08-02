@@ -267,7 +267,9 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
                     # 顯示原新聞標題 (含連結)
                     st.markdown(f"• [{item['title']}]({item['link']})")
                     # 顯示繁體中文翻譯
-                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>🈳 譯：{item['title_zh']}</b>", unsafe_allow_html=True)
+                   # 顯示繁體中文翻譯 (改用 🌐 避免多空誤解)
+st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>🌐 譯：{item['title_zh']}</b>", unsafe_allow_html=True)
+
                     # 顯示發布來源、時間與情緒得分
                     st.markdown(
                         f"&nbsp;&nbsp;&nbsp;&nbsp;來源: *{item['publisher']}* | "
