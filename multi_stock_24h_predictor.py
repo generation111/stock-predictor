@@ -20,14 +20,21 @@ except LookupError:
 
 st.set_page_config(page_title="美股 24H 實時走勢預測工具", layout="wide")
 
-# 2. 側邊欄：股票代號與系統參數設定
+# 2. 側邊欄：股票代號動態記憶與系統參數設定
 st.sidebar.header("🔍 美股代號與參數設定")
 
-quick_tickers = ["ABVC", "TSLA", "NVDA", "AAPL", "AMD", "AMZN", "MSFT", "GOOGL", "META"]
-selected_quick = st.sidebar.selectbox("🔥 熱門個股快速選擇", options=["自訂輸入"] + quick_tickers, index=1)
+# 初始化 Session State 清單 (包含預設熱門股)
+if 'quick_tickers' not in st.session_state:
+    st.session_state.quick_tickers = ["ABVC", "TSLA", "NVDA", "AAPL", "AMD", "AMZN", "MSFT", "GOOGL", "META"]
+
+selected_quick = st.sidebar.selectbox("🔥 熱門與歷史搜尋個股", options=["自訂輸入"] + st.session_state.quick_tickers, index=1)
 
 default_ticker = "ABVC" if selected_quick == "自訂輸入" else selected_quick
 ticker_input = st.sidebar.text_input("輸入美股股票代號 (例如: ABVC, TSLA)", value=default_ticker).upper().strip()
+
+# 若輸入了不在清單中的新代號，自動追加至歷史搜尋清單中
+if ticker_input and ticker_input not in st.session_state.quick_tickers:
+    st.session_state.quick_tickers.append(ticker_input)
 
 st.sidebar.markdown("---")
 include_extended = st.sidebar.checkbox("開啟夜盤與延長交易時段 (24H Extended)", value=True)
@@ -45,7 +52,7 @@ def translate_to_zh_tw(text):
     except Exception:
         return text  # 若翻譯失敗則退回原英文
 
-# 3. 新聞情緒分析模組 (支援新舊版 yfinance API、發布時間與繁體中文翻譯)
+# 3. 新聞情緒分析模組
 def get_news_sentiment(ticker_symbol):
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -64,7 +71,6 @@ def get_news_sentiment(ticker_symbol):
             link = "#"
             pub_time_str = "未知時間"
 
-            # 兼容 yfinance 新版 (content 字典) 與舊版格式
             if isinstance(item, dict) and 'content' in item:
                 content = item.get('content', {})
                 title = content.get('title', '')
@@ -73,7 +79,6 @@ def get_news_sentiment(ticker_symbol):
                 canonical_url = content.get('canonicalUrl', {})
                 link = click_through_url.get('url') or canonical_url.get('url') or '#'
                 
-                # 取得時間
                 pub_date = content.get('pubDate')
                 if pub_date:
                     try:
@@ -96,9 +101,7 @@ def get_news_sentiment(ticker_symbol):
             if not title:
                 continue
             
-            # 即時繁體中文翻譯
             title_zh = translate_to_zh_tw(title)
-            
             score = sia.polarity_scores(title)['compound']
             compound_scores.append(score)
             processed_news.append({
@@ -118,40 +121,28 @@ def get_news_sentiment(ticker_symbol):
 # 4. 進階特徵工程 (技術指標 + 波動率 + 布林通道 + 情緒)
 def compute_indicators(df, sentiment_score):
     data = df.copy()
-    
-    # 價格報酬率
     data['Returns'] = data['Close'].pct_change()
-    
-    # 均線指標
     data['SMA_5'] = data['Close'].rolling(window=5).mean()
     data['SMA_20'] = data['Close'].rolling(window=20).mean()
     
-    # RSI (相對強弱指標)
     delta = data['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-9)
     data['RSI'] = 100 - (100 / (1 + rs))
     
-    # MACD
     ema12 = data['Close'].ewm(span=12, adjust=False).mean()
     ema26 = data['Close'].ewm(span=26, adjust=False).mean()
     data['MACD'] = ema12 - ema26
     data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
     
-    # 布林通道與位置指標 (BB_%B)
     std_20 = data['Close'].rolling(window=20).std()
     data['BB_Upper'] = data['SMA_20'] + (std_20 * 2)
     data['BB_Lower'] = data['SMA_20'] - (std_20 * 2)
     data['BB_PctB'] = (data['Close'] - data['BB_Lower']) / (data['BB_Upper'] - data['BB_Lower'] + 1e-9)
     
-    # 波動率 (針對夜盤與生技股短線波動優化)
     data['Volatility'] = data['Returns'].rolling(window=10).std()
-    
-    # 新聞情緒特徵
     data['Sentiment'] = sentiment_score
-    
-    # 預測目標：下一期收盤價高於當期為 1 (漲)，否則為 0 (跌)
     data['Target'] = (data['Close'].shift(-1) > data['Close']).astype(int)
     
     return data.dropna()
@@ -220,7 +211,6 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         price_change = latest_price - prev_price
         pct_change = (price_change / prev_price) * 100
 
-        # 頂部關鍵資訊指標
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(f"{symbol} 當前報價 (含夜盤)", f"${latest_price:.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
         
@@ -237,7 +227,6 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
 
         st.markdown("---")
 
-        # K 線圖
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
             x=df.index, open=df['Open'], high=df['High'],
@@ -256,7 +245,6 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # 底部資訊區
         col_left, col_right = st.columns([1, 1])
         
         with col_left:
@@ -264,12 +252,8 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
             if news_data:
                 for item in news_data[:5]:
                     score_color = "green" if item['score'] > 0 else ("red" if item['score'] < 0 else "gray")
-                    # 顯示原新聞標題 (含連結)
                     st.markdown(f"• [{item['title']}]({item['link']})")
-                    # 顯示繁體中文翻譯
-                   # 顯示繁體中文翻譯 (改用 🌐 避免多空誤解)
                     st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<b>🌐 譯：{item['title_zh']}</b>", unsafe_allow_html=True)
-                    # 顯示發布來源、時間與情緒得分
                     st.markdown(
                         f"&nbsp;&nbsp;&nbsp;&nbsp;來源: *{item['publisher']}* | "
                         f"時間: `{item['pub_time']}` | "
