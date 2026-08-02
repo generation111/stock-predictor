@@ -14,68 +14,76 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 注入修復標題顯示與字體大小的 CSS
+# 注入動態縮放與完整呈現股票名稱的 CSS
 st.markdown("""
 <style>
-    /* 修正頂部容器 Margin / Padding，防止邊界擠壓 */
+    /* 修正頂部邊界，避免內容緊貼頂部邊緣 */
     .main .block-container {
-        padding-top: 2.2rem !important;
+        padding-top: 2rem !important;
         padding-bottom: 1.5rem !important;
         padding-left: 1rem !important;
         padding-right: 1rem !important;
     }
     
-    /* 標題專用容器：確保代號與公司名稱清晰、不縮小、不擠壓 */
-    .title-box {
-        margin-top: 0.5rem !important;
-        margin-bottom: 1.2rem !important;
-        line-height: 1.5 !important;
+    /* 股票標題區塊：使用自適應字體大小 (Clamp) 與自動換行 */
+    .stock-title-container {
+        margin-top: 0.2rem !important;
+        margin-bottom: 1rem !important;
+        padding: 4px 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px 12px;
     }
     
+    /* 股票代號：顯眼但不佔據過多空間 */
     .title-symbol {
-        font-size: 1.8rem !important;
+        font-size: clamp(1.3rem, 2.5vw, 1.8rem) !important;
         font-weight: 800 !important;
         color: #FFFFFF !important;
-        margin-right: 8px !important;
+        line-height: 1.2 !important;
     }
     
+    /* 公司全名：可自動微調縮放並完整的呈現在畫面上 */
     .title-name {
-        font-size: 1.2rem !important;
+        font-size: clamp(0.95rem, 1.8vw, 1.2rem) !important;
         font-weight: 500 !important;
-        color: #CCCCCC !important;
+        color: #B0B0B0 !important;
+        line-height: 1.3 !important;
         word-break: break-word !important;
+        overflow-wrap: break-word !important;
     }
 
-    /* RWD 適應（手機與平板直立） */
+    /* 指標數據卡片優化 */
+    [data-testid="stMetric"] {
+        background-color: rgba(255, 255, 255, 0.03);
+        border-radius: 8px;
+        padding: 8px 12px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    
+    [data-testid="stMetricLabel"] {
+        font-size: clamp(0.8rem, 1.2vw, 0.95rem) !important;
+        color: #A0A0A0 !important;
+    }
+    
+    [data-testid="stMetricValue"] {
+        font-size: clamp(1.1rem, 2vw, 1.5rem) !important;
+    }
+
+    /* 行動裝置/窄螢幕 RWD 調優 */
     @media (max-width: 900px) {
         .main .block-container {
-            padding-top: 2.5rem !important;
+            padding-top: 2.2rem !important;
             padding-left: 0.6rem !important;
             padding-right: 0.6rem !important;
         }
         
-        .title-symbol {
-            font-size: 1.4rem !important;
-        }
-        
-        .title-name {
-            font-size: 1.0rem !important;
-        }
-        
-        /* Metric 卡片外觀優化 */
-        [data-testid="stMetric"] {
-            background-color: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            padding: 10px 12px !important;
-            margin-bottom: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
         .stTabs [data-baseweb="tab"] {
-            height: 42px !important;
-            font-size: 14px !important;
-            padding-left: 8px !important;
-            padding-right: 8px !important;
+            height: 40px !important;
+            font-size: 13px !important;
+            padding-left: 6px !important;
+            padding-right: 6px !important;
         }
     }
 </style>
@@ -341,9 +349,9 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None and bt_metrics is not None:
-        # 重構後的渲染結構：確保代號與全名均能以正確字型大放顯示
+        # 使用動態縮放容器，確保代號與公司全名完整呈現
         st.markdown(f"""
-        <div class="title-box">
+        <div class="stock-title-container">
             <span class="title-symbol">⚡ {symbol}</span>
             <span class="title-name">({company_name})</span>
         </div>
