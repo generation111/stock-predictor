@@ -7,45 +7,52 @@ from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
 import datetime
 
-# 1. 頁面配置與 CSS 流動自適應注入 (包含平板標題遮蔽修正)
+# 1. 頁面配置與 CSS 流動自適應注入
 st.set_page_config(
     page_title="24H 實時走勢預測與回測系統", 
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# 注入修復標題遮蔽與整體響應式的 CSS
+# 注入修復股票名稱顯示不完整的 CSS
 st.markdown("""
 <style>
-    /* 修正頂部容器 Margin / Padding，防止內容與標題被螢幕頂部遮蔽 */
+    /* 修正頂部容器 Margin / Padding */
     .main .block-container {
         padding-top: 2.2rem !important;
         padding-bottom: 1.5rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
     }
     
-    /* 專為股票名稱標題設計的 CSS，防止文字行高裁切 (Line-height Clipping) */
-    .stock-title-container {
+    /* 股票標題彈性佈局容器 */
+    .stock-header-wrapper {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px 10px;
         margin-top: 0.5rem !important;
         margin-bottom: 1rem !important;
-        line-height: 1.5 !important;
-        overflow: visible !important;
+        width: 100%;
+        overflow: hidden;
     }
     
-    .stock-title-text {
+    .stock-symbol-text {
         font-size: 1.6rem !important;
-        font-weight: 700 !important;
-        line-height: 1.4 !important;
+        font-weight: 800 !important;
         color: #FFFFFF !important;
-        display: block !important;
-        padding-top: 5px !important;
+        line-height: 1.2 !important;
+        white-space: nowrap;
     }
     
-    .stock-subtitle-text {
-        font-size: 1.0rem !important;
+    .stock-name-text {
+        font-size: 1.1rem !important;
+        font-weight: 500 !important;
         color: #A0A0A0 !important;
-        font-weight: 400 !important;
+        line-height: 1.2 !important;
+        word-break: break-word; /* 允許長文字自動換行 */
+        overflow-wrap: break-word;
+        max-width: 100%;
     }
 
     /* 針對手機和平板直立畫面的 RWD 調優 */
@@ -56,9 +63,12 @@ st.markdown("""
             padding-right: 0.6rem !important;
         }
         
-        .stock-title-text {
+        .stock-symbol-text {
             font-size: 1.35rem !important;
-            line-height: 1.4 !important;
+        }
+        
+        .stock-name-text {
+            font-size: 0.95rem !important;
         }
         
         /* 讓 metric 卡片在直立螢幕上有清晰的卡片外觀 */
@@ -329,7 +339,7 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
     except Exception:
         return None, None, None, None, None, ticker
 
-# 主畫面渲染 (修復標題遮蔽問題)
+# 主畫面渲染 (修復股票名稱顯示完整性)
 @st.fragment(run_every=refresh_rate)
 def render_dashboard(symbol, p_period, p_interval, p_extended):
     if not symbol:
@@ -341,10 +351,11 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None and bt_metrics is not None:
-        # 使用獨立 HTML 容器，確保標題不受原本 h3/h1 的 CSS 限制而出現遮蔽
+        # 使用自適應 Flex 容器，確保代號與過長的公司名稱皆可彈性自動換行並完整顯示
         st.markdown(f"""
-        <div class="stock-title-container">
-            <span class="stock-title-text">⚡ {symbol} <span class="stock-subtitle-text">({company_name})</span></span>
+        <div class="stock-header-wrapper">
+            <span class="stock-symbol-text">⚡ {symbol}</span>
+            <span class="stock-name-text">({company_name})</span>
         </div>
         """, unsafe_allow_html=True)
         
@@ -353,7 +364,7 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         price_change = latest_price - prev_price
         pct_change = (price_change / prev_price) * 100
 
-        # 直立式自適應網格：平板/手機平鋪為 2x2
+        # 直立式自適應網格：2x2 排版
         col1, col2 = st.columns(2)
         with col1:
             st.metric("最新報價", f"${latest_price:.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
