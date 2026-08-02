@@ -12,7 +12,7 @@ import datetime
 import requests
 from deep_translator import GoogleTranslator
 
-# 1. 初始化 NLTK Vader 詞庫 (自動下載並防錯)
+# 1. 初始化 NLTK Vader 詞庫
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
@@ -20,34 +20,12 @@ except LookupError:
 
 st.set_page_config(page_title="美股 24H 實時走勢預測工具", layout="wide")
 
-# 2. 側邊欄：股票代號動態記憶與系統參數設定
-st.sidebar.header("🔍 美股代號與參數設定")
-
-# 初始化 Session State 清單 (容量提升至最多 50 項)
+# 初始化 Session State
 if 'quick_tickers' not in st.session_state:
     st.session_state.quick_tickers = ["ABVC", "TSLA", "NVDA", "AAPL", "AMD", "AMZN", "MSFT", "GOOGL", "META"]
 
-# 功能選項：是否允許自動追加歷史查詢個股
-auto_add_history = st.sidebar.checkbox("自動追加查詢個股至選單", value=True)
-
-selected_quick = st.sidebar.selectbox("🔥 熱門與歷史搜尋個股 (上限50項)", options=["自訂輸入"] + st.session_state.quick_tickers, index=1)
-
-default_ticker = "ABVC" if selected_quick == "自訂輸入" else selected_quick
-ticker_input = st.sidebar.text_input("輸入美股股票代號 (例如: ABVC, TSLA)", value=default_ticker).upper().strip()
-
-# 判斷是否追加至歷史搜尋清單 (需勾選功能且不重複，最多保留前 50 個)
-if auto_add_history and ticker_input and ticker_input not in st.session_state.quick_tickers:
-    st.session_state.quick_tickers.append(ticker_input)
-    if len(st.session_state.quick_tickers) > 50:
-        st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
-
-st.sidebar.markdown("---")
-include_extended = st.sidebar.checkbox("開啟夜盤與延長交易時段 (24H Extended)", value=True)
-interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], index=1)
-period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
-refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
-
-# 翻譯輔助函式 (翻譯為繁體中文)
+# 2. 翻譯輔助函式 (加上快取以提升效能，避免重複請求 Google 翻譯)
+@st.cache_data(ttl=3600, show_spinner=False)
 def translate_to_zh_tw(text):
     if not text:
         return ""
@@ -55,9 +33,36 @@ def translate_to_zh_tw(text):
         translated = GoogleTranslator(source='auto', target='zh-TW').translate(text)
         return translated
     except Exception:
-        return text  # 若翻譯失敗則退回原英文
+        return text  # 翻譯失敗則退回原英文
 
-# 3. 新聞情緒分析模組
+# 3. 側邊欄：股票代號與參數設定
+st.sidebar.header("🔍 美股代號與參數設定")
+
+auto_add_history = st.sidebar.checkbox("自動追加查詢個股至選單", value=True)
+
+selected_quick = st.sidebar.selectbox(
+    "🔥 熱門與歷史搜尋個股 (上限50項)", 
+    options=["自訂輸入"] + st.session_state.quick_tickers, 
+    index=1
+)
+
+default_ticker = "ABVC" if selected_quick == "自訂輸入" else selected_quick
+ticker_input = st.sidebar.text_input("輸入美股股票代號 (例如: ABVC, TSLA)", value=default_ticker).upper().strip()
+
+st.sidebar.markdown("---")
+include_extended = st.sidebar.checkbox("開啟夜盤與延長交易時段 (24H Extended)", value=True)
+interval = st.sidebar.selectbox("K線時間間隔", ["1m", "5m", "15m", "1d"], index=1)
+period = "5d" if interval in ["1m", "5m", "15m"] else "1y"
+refresh_rate = st.sidebar.slider("自動更新頻率 (秒)", min_value=10, max_value=60, value=20)
+
+# 動態追加合法代號至歷史清單的輔助函式
+def update_ticker_history(ticker):
+    if auto_add_history and ticker and ticker not in st.session_state.quick_tickers:
+        st.session_state.quick_tickers.append(ticker)
+        if len(st.session_state.quick_tickers) > 50:
+            st.session_state.quick_tickers = st.session_state.quick_tickers[-50:]
+
+# 4. 新聞情緒分析模組
 def get_news_sentiment(ticker_symbol):
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -123,7 +128,7 @@ def get_news_sentiment(ticker_symbol):
     except Exception:
         return 0.0, []
 
-# 4. 進階特徵工程 (技術指標 + 波動率 + 布林通道 + 情緒)
+# 5. 技術指標計算模組
 def compute_indicators(df, sentiment_score):
     data = df.copy()
     data['Returns'] = data['Close'].pct_change()
@@ -152,8 +157,8 @@ def compute_indicators(df, sentiment_score):
     
     return data.dropna()
 
-# 5. 數據讀取與機器學習建模
-@st.cache_data(ttl=10)
+# 6. 數據擷取與預測建模
+@st.cache_data(ttl=15, show_spinner=False)
 def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True):
     try:
         stock = yf.Ticker(ticker)
@@ -197,7 +202,7 @@ def fetch_and_predict_dynamic(ticker, period="5d", interval="5m", extended=True)
     except Exception:
         return None, None, None, None, 0.0, [], None
 
-# 6. 主畫面局部刷新模組
+# 7. 主畫面局部刷新渲染模組
 @st.fragment(run_every=refresh_rate)
 def render_dashboard(symbol, p_period, p_interval, p_extended):
     if not symbol:
@@ -209,6 +214,9 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     )
 
     if df is not None:
+        # 成功抓到資料，確保將該合法股票寫入選單清單
+        update_ticker_history(symbol)
+
         st.title(f"⚡ {symbol} ({company_name}) 全時段實時走勢預測")
         
         latest_price = df['Close'].iloc[-1]
@@ -220,14 +228,12 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
         col1.metric(f"{symbol} 當前報價 (含夜盤)", f"${latest_price:.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
         
         pred_text = "🟢 看漲 (UP)" if latest_pred == 1 else "🔴 看跌 (DOWN)"
-        
         col2.metric("下一週期預測方向", pred_text)
         col3.metric("預測信心度", f"{latest_prob * 100:.1f}%")
         
         sentiment_label = "中性 🟡"
         if sentiment_score > 0.05: sentiment_label = "偏多 🟢"
         elif sentiment_score < -0.05: sentiment_label = "偏空 🔴"
-        
         col4.metric("即時新聞情緒指數", f"{sentiment_score:+.3f}", sentiment_label)
 
         st.markdown("---")
@@ -279,5 +285,5 @@ def render_dashboard(symbol, p_period, p_interval, p_extended):
     else:
         st.error(f"⚠️ 無法找到代號 **{symbol}** 的交易數據。請檢查股票代號是否正確，或嘗試更換時間間隔。")
 
-# 執行主畫面渲染
+# 8. 執行主畫面渲染
 render_dashboard(ticker_input, period, interval, include_extended)
